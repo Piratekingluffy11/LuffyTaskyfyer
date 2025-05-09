@@ -22,6 +22,11 @@ function MiniSidebar() {
       title: "All",
       link: "/",
     },
+    // {
+    //   icon: <IconFileCheck strokeColor={getStrokeColor("/team")} />,
+    //   title: "Team",
+    //   link: "/team",
+    // },
     {
       icon: <IconFileCheck strokeColor={getStrokeColor("/completed")} />,
       title: "Completed",

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Toaster } from "react-hot-toast";
 import UserProvider from "@/providers/UserProvider";
+import { TasksProvider } from "@/context/taskContext";
 import { Inter } from "next/font/google";
 import MiniSidebar from "./Components/MiniSidebar/MiniSidebar";
 import Header from "./Components/Header/Header";
@@ -9,6 +10,7 @@ import MainContentLayout from "@/providers/MainContentLayout";
 import SidebarProvider from "@/providers/SidebarProvider";
 import MainLayout from "@/providers/MainLayout";
 import GTMInitialiser from "@/providers/GTMInitialiser";
+import NotificationWrapper from "@/components/ui/notificationWrapper"; // ✅ Match the actual file casing
 
 const inter = Inter({
   subsets: ["latin"],
@@ -38,18 +40,21 @@ export default function RootLayout({
       </head>
       <body className={inter.className}>
         <UserProvider>
-          <Toaster position="top-center" />
+          <TasksProvider>
+            <Toaster position="top-center" />
+            <NotificationWrapper /> {/* ✅ Safe now — it's a Client Component */}
 
-          <div className="h-full flex overflow-hidden">
-            <MiniSidebar />
-            <div className="flex-1 flex flex-col">
-              <Header />
-              <MainContentLayout>
-                <MainLayout>{children}</MainLayout>
-                <SidebarProvider />
-              </MainContentLayout>
+            <div className="h-full flex overflow-hidden">
+              <MiniSidebar />
+              <div className="flex-1 flex flex-col">
+                <Header />
+                <MainContentLayout>
+                  <MainLayout>{children}</MainLayout>
+                  <SidebarProvider />
+                </MainContentLayout>
+              </div>
             </div>
-          </div>
+          </TasksProvider>
         </UserProvider>
       </body>
     </html>

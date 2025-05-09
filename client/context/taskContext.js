@@ -1,7 +1,9 @@
+"use client";
 import axios from "axios";
-import React, { createContext, useEffect, useState, useContext } from "react";
+import React, { createContext, useState, useEffect, useContext } from "react";
 import { useUserContext } from "./userContext";
 import toast from "react-hot-toast";
+import { v4 as uuidv4 } from "uuid";
 
 const TasksContext = createContext();
 
@@ -10,21 +12,18 @@ const serverUrl =
     ? "http://localhost:8001/api/v1"
     : "https://taskfyer.onrender.com/api/v1";
 
-// Axios instance with credentials
 const axiosWithCreds = axios.create({
   baseURL: serverUrl,
   withCredentials: true,
 });
 
-// Default shape for a new task
 const defaultTask = {
   title: "",
   description: "",
-  dueDate: new Date().toISOString().slice(0, 10), // yyyy-mm-dd (local-safe)
+  dueDate: new Date().toISOString().slice(0, 10),
   priority: "low",
   completed: false,
 };
-
 
 export const TasksProvider = ({ children }) => {
   const { user } = useUserContext();
@@ -39,14 +38,32 @@ export const TasksProvider = ({ children }) => {
   const [modalMode, setModalMode] = useState("");
   const [profileModal, setProfileModal] = useState(false);
 
-  // Open modal to create new task
+  const [notifications, setNotifications] = useState([]);
+  const [unseenNotificationsCount, setUnseenNotificationsCount] = useState(0);
+
+  const triggerNotification = (message, link = "/tasks") => {
+    const newNotification = {
+      id: uuidv4(),
+      message,
+      link,
+      seen: false,
+      createdAt: new Date(),
+    };
+    setNotifications((prev) => [newNotification, ...prev]);
+    setUnseenNotificationsCount((prev) => prev + 1);
+  };
+
+  const markNotificationsAsSeen = () => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, seen: true })));
+    setUnseenNotificationsCount(0);
+  };
+
   const openModalForAdd = () => {
     setModalMode("add");
     setIsEditing(true);
     setTask(defaultTask);
   };
 
-  // Open modal to edit existing task
   const openModalForEdit = (task) => {
     setModalMode("edit");
     setIsEditing(true);
@@ -68,7 +85,9 @@ export const TasksProvider = ({ children }) => {
     setLoading(true);
     try {
       const res = await axiosWithCreds.get("/tasks");
-      setTasks(res.data.tasks || []);
+      const fetchedTasks = res.data.tasks || [];
+      setTasks(fetchedTasks);
+      checkForNotifications(fetchedTasks);
     } catch (error) {
       console.error("Error getting tasks", error);
       toast.error("Failed to fetch tasks.");
@@ -94,6 +113,7 @@ export const TasksProvider = ({ children }) => {
       const res = await axiosWithCreds.post("/task/create", task);
       setTasks((prev) => [...prev, res.data]);
       toast.success("Task created successfully!");
+      triggerNotification("✅ Task created successfully!");
     } catch (error) {
       console.error("Error creating task", error);
       toast.error(error?.response?.data?.message || "Failed to create task.");
@@ -109,6 +129,7 @@ export const TasksProvider = ({ children }) => {
         prev.map((t) => (t._id === res.data._id ? res.data : t))
       );
       toast.success("Task updated successfully!");
+      triggerNotification(task.completed ? "🎉 Task completed!" : "✏️ Task updated!");
     } catch (error) {
       console.error("Error updating task", error);
       toast.error("Failed to update task.");
@@ -121,6 +142,14 @@ export const TasksProvider = ({ children }) => {
     try {
       await axiosWithCreds.delete(`/task/${taskId}`);
       setTasks((prev) => prev.filter((t) => t._id !== taskId));
+
+      // Remove from notified list in localStorage too
+      const notified = JSON.parse(localStorage.getItem("notifiedTaskIds") || "[]");
+      localStorage.setItem(
+        "notifiedTaskIds",
+        JSON.stringify(notified.filter((id) => id !== taskId))
+      );
+
       toast.success("Task deleted successfully!");
     } catch (error) {
       console.error("Error deleting task", error);
@@ -129,17 +158,14 @@ export const TasksProvider = ({ children }) => {
     setLoading(false);
   };
 
-  // Input handler that supports type conversion
   const handleInput = (name) => (e) => {
     if (name === "setTask") {
-      setTask(e); // entire object replacement
+      setTask(e);
     } else {
       let value = e.target.value;
-
       if (name === "completed") {
         value = value === "true";
       }
-
       setTask((prev) => ({
         ...prev,
         [name]: value,
@@ -150,10 +176,69 @@ export const TasksProvider = ({ children }) => {
   const completedTasks = tasks.filter((t) => t.completed);
   const activeTasks = tasks.filter((t) => !t.completed);
 
-  useEffect(() => {
-    if (userId) {
-      getTasks();
+  // ✅ FIXED: Check for overdue tasks only once per task (using localStorage)
+  const checkForNotifications = (tasks) => {
+    const currentDate = new Date();
+    const seenTaskIds = JSON.parse(localStorage.getItem("notifiedTaskIds") || "[]");
+
+    const newNotifications = tasks.filter((task) => {
+      const dueDate = new Date(task.dueDate);
+      return !task.completed && dueDate <= currentDate && !seenTaskIds.includes(task._id);
+    });
+
+    if (newNotifications.length > 0) {
+      newNotifications.forEach((task) => {
+        triggerNotification(`⚠️ Task "${task.title}" is overdue!`, "/tasks");
+      });
+
+      const updatedIds = [
+        ...new Set([...seenTaskIds, ...newNotifications.map((t) => t._id)]),
+      ];
+      localStorage.setItem("notifiedTaskIds", JSON.stringify(updatedIds));
     }
+
+    const unseen = notifications.filter((n) => !n.seen).length;
+    setUnseenNotificationsCount(unseen);
+  };
+
+  useEffect(() => {
+    const alertedTaskIds = new Set();
+  
+    const interval = setInterval(() => {
+      const now = new Date();
+      tasks.forEach((task) => {
+        const due = new Date(task.dueDate);
+        const timeLeft = due.getTime() - now.getTime();
+  
+        if (
+          !task.completed &&
+          timeLeft > 0 &&
+          timeLeft <= 15 * 60 * 1000 &&
+          !alertedTaskIds.has(task._id)
+        ) {
+          const message = `⏰ Task "${task.title}" is due in ${Math.floor(timeLeft / 60000)} minutes!`;
+  
+          // Show toast
+          toast(message, {
+            icon: "⏳",
+            duration: 6000,
+          });
+  
+          // Trigger in-app notification
+          triggerNotification(message);
+  
+          // Remember that we alerted this task
+          alertedTaskIds.add(task._id);
+        }
+      });
+    }, 60000);
+  
+    return () => clearInterval(interval);
+  }, [tasks]);
+  
+
+  useEffect(() => {
+    if (userId) getTasks();
   }, [userId]);
 
   return (
@@ -162,7 +247,7 @@ export const TasksProvider = ({ children }) => {
         tasks,
         loading,
         task,
-        setTask, // ✅ Expose setTask for direct edits
+        setTask,
         getTask,
         createTask,
         updateTask,
@@ -178,9 +263,13 @@ export const TasksProvider = ({ children }) => {
         closeModal,
         modalMode,
         openProfileModal,
+        profileModal,
         activeTasks,
         completedTasks,
-        profileModal,
+        notifications,
+        unseenNotificationsCount,
+        markNotificationsAsSeen,
+        triggerNotification,
       }}
     >
       {children}
